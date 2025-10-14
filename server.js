@@ -2,11 +2,18 @@ const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
 require('dotenv').config();
-const https = require('https');
-const fs = require('fs');
 
 const app = express();
-app.use(cors());
+
+// --- Configure CORS to allow your Netlify site ---
+// IMPORTANT: Make sure this URL exactly matches your current Netlify site URL
+const corsOptions = {
+    origin: 'https://sunny-tartufo-ea81f7.netlify.app',
+    optionsSuccessStatus: 200
+};
+app.use(cors(corsOptions));
+// --- End of CORS configuration ---
+
 app.use(express.json());
 
 // --- Database Connection ---
@@ -18,25 +25,21 @@ mongoose.connect(uri)
 // --- API Routes ---
 const userRoutes = require('./routes/userRoutes');
 app.use('/api/users', userRoutes);
+
 const mainCategoryRoutes = require('./routes/mainCategoryRoutes');
 app.use('/api/main-categories', mainCategoryRoutes);
+
 const subcategoryRoutes = require('./routes/subcategoryRoutes');
 app.use('/api/subcategories', subcategoryRoutes);
+
 const workLogRoutes = require('./routes/workLogRoutes');
 app.use('/api/worklogs', workLogRoutes);
+
 const payrollRoutes = require('./routes/payrollRoutes');
 app.use('/api/payroll', payrollRoutes);
 
-console.log("✅ --- FINAL SERVER CODE IS RUNNING --- ✅");
-
-// --- SSL Options with the NEW filenames ---
-const options = {
-  key: fs.readFileSync('localhost+1-key.pem'), // Use the new key file
-  cert: fs.readFileSync('localhost+1.pem')   // Use the new cert file
-};
-
-// --- Start the Secure Server ---
+// --- Start the Simple HTTP Server ---
 const PORT = process.env.PORT || 5001;
-https.createServer(options, app).listen(PORT, () => {
-    console.log(`Server is running securely on port: ${PORT}`);
+app.listen(PORT, () => {
+    console.log(`Server is running on port: ${PORT}`);
 });
