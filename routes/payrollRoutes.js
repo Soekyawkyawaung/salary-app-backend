@@ -3,25 +3,43 @@ const router = express.Router();
 const WorkLog = require('../models/workLogModel');
 const { protect, isAdmin } = require('../middleware/authMiddleware');
 
-// This is the correct version of the '/calculate' route
+// --- THIS IS THE CORRECTED CALCULATION ---
+const calculateSalary = {
+    $sum: {
+        $switch: {
+            branches: [
+                {
+                    case: { $eq: ['$paymentTypeAtTime', 'perPiece'] },
+                    then: { $multiply: ['$quantity', '$rateAtTime'] }
+                },
+                {
+                    case: { $eq: ['$paymentTypeAtTime', 'perHour'] },
+                    then: { $multiply: ['$hoursWorked', '$rateAtTime'] }
+                },
+                {
+                    case: { $eq: ['$paymentTypeAtTime', 'perDay'] },
+                    then: '$rateAtTime'
+                }
+            ],
+            default: 0
+        }
+    }
+};
+
 router.post('/calculate', protect, isAdmin, async (req, res) => {
     try {
         const { startDate, endDate } = req.body;
         const payroll = await WorkLog.aggregate([
             { $match: { workDate: { $gte: new Date(startDate), $lte: new Date(endDate) } } },
-            // It correctly uses the saved 'paymentAtTime'
-            { $group: { _id: '$employeeId', totalSalary: { $sum: { $multiply: ['$quantity', '$paymentAtTime'] } } } },
+            { $group: { _id: '$employeeId', totalSalary: calculateSalary } },
             { $lookup: { from: 'users', localField: '_id', foreignField: '_id', as: 'employee' } },
             { $unwind: '$employee' },
             { $project: { _id: 0, employeeName: '$employee.fullName', totalSalary: '$totalSalary' } }
         ]);
         res.json(payroll);
-    } catch (error) {
-        res.status(500).json({ message: 'Server Error' });
-    }
+    } catch (error) { res.status(500).json({ message: 'Server Error' }); }
 });
 
-// This is the correct version of the '/current-period-summary' route
 router.get('/current-period-summary', protect, isAdmin, async (req, res) => {
     try {
         const today = new Date();
@@ -38,18 +56,14 @@ router.get('/current-period-summary', protect, isAdmin, async (req, res) => {
         
         const payroll = await WorkLog.aggregate([
             { $match: { workDate: { $gte: startDate, $lte: endDate } } },
-            // It correctly uses the saved 'paymentAtTime'
-            { $group: { _id: '$employeeId', totalSalary: { $sum: { $multiply: ['$quantity', '$paymentAtTime'] } } } },
+            { $group: { _id: '$employeeId', totalSalary: calculateSalary } },
             { $lookup: { from: 'users', localField: '_id', foreignField: '_id', as: 'employee' } },
             { $unwind: '$employee' },
             { $project: { _id: 0, employeeName: '$employee.fullName', totalSalary: '$totalSalary' } }
         ]);
         
-        console.log("Admin Summary Payroll Data:", payroll); // For debugging
         res.json({ payroll, startDate, endDate });
-    } catch (error) {
-        res.status(500).json({ message: "Server Error" });
-    }
+    } catch (error) { res.status(500).json({ message: "Server Error" }); }
 });
 
 module.exports = router;

@@ -26,23 +26,7 @@ router.post('/', protect, isAdmin, async (req, res) => {
     }
 });
 
-// PUT (update) a subcategory
-router.put('/:id', protect, isAdmin, async (req, res) => {
-    try {
-        const { name, paymentPerPiece } = req.body;
-        const subcategory = await Subcategory.findById(req.params.id);
-        if (subcategory) {
-            subcategory.name = name || subcategory.name;
-            subcategory.rate = paymentPerPiece || subcategory.rate;
-            const updatedSubcategory = await subcategory.save();
-            res.json(updatedSubcategory);
-        } else {
-            res.status(404).json({ message: 'Subcategory not found' });
-        }
-    } catch (error) {
-        res.status(500).json({ message: 'Server Error' });
-    }
-});
+
 
 // DELETE a subcategory
 router.delete('/:id', protect, isAdmin, async (req, res) => {
@@ -51,6 +35,26 @@ router.delete('/:id', protect, isAdmin, async (req, res) => {
         if (subcategory) {
             await subcategory.deleteOne();
             res.json({ message: 'Subcategory removed' });
+        } else {
+            res.status(404).json({ message: 'Subcategory not found' });
+        }
+    } catch (error) {
+        res.status(500).json({ message: 'Server Error' });
+    }
+});
+
+router.put('/:id', protect, isAdmin, async (req, res) => {
+    try {
+        // It now only expects 'rate' in the body
+        const { rate } = req.body;
+        const subcategory = await Subcategory.findById(req.params.id);
+
+        if (subcategory) {
+            // It only modifies the rate
+            subcategory.rate = rate;
+            
+            const updatedSubcategory = await subcategory.save();
+            res.json(updatedSubcategory);
         } else {
             res.status(404).json({ message: 'Subcategory not found' });
         }

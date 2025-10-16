@@ -5,15 +5,16 @@ require('dotenv').config();
 
 const app = express();
 
-// --- Configure CORS to allow your Netlify site ---
-// IMPORTANT: Make sure this URL exactly matches your current Netlify site URL
+// --- CORS Configuration ---
+// This allows both your local and deployed frontend to connect
 const corsOptions = {
-    origin: 'https://sunny-tartufo-ea81f7.netlify.app',
+    origin: [
+        'https://goldenfalcon.netlify.app',
+        'http://localhost:5173'
+    ],
     optionsSuccessStatus: 200
 };
 app.use(cors(corsOptions));
-// --- End of CORS configuration ---
-
 app.use(express.json());
 
 // --- Database Connection ---
@@ -38,7 +39,7 @@ app.use('/api/worklogs', workLogRoutes);
 const payrollRoutes = require('./routes/payrollRoutes');
 app.use('/api/payroll', payrollRoutes);
 
-// --- Start the Simple HTTP Server ---
+// --- Start the Server ---
 const PORT = process.env.PORT || 5001;
 app.listen(PORT, () => {
     console.log(`Server is running on port: ${PORT}`);
