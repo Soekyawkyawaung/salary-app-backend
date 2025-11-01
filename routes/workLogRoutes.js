@@ -363,30 +363,29 @@ router.get('/pannwar-deliveries/all', protect, isAdmin, async (req, res) => {
     }
 });
 
-// In workLogRoutes.js - update the /current-salary route
 router.get('/current-salary', protect, async (req, res) => {
     try {
         const today = new Date();
-        const year = today.getFullYear();
-        const month = today.getMonth();
-        const currentDay = today.getDate();
+        const year = today.getUTCFullYear(); // Use UTC
+        const month = today.getUTCMonth(); // Use UTC
+        const currentDay = today.getUTCDate(); // Use UTC
         
         let startDate, endDate;
 
         if (currentDay <= 15) {
-            // First half: 1st to 15th of current month
-            startDate = new Date(year, month, 1);
-            endDate = new Date(year, month, 15, 23, 59, 59, 999);
+            // First half: 1st to 15th of current month (UTC)
+            startDate = new Date(Date.UTC(year, month, 1, 0, 0, 0, 0));
+            endDate = new Date(Date.UTC(year, month, 15, 23, 59, 59, 999));
         } else {
-            // Second half: 16th to last day of current month
-            startDate = new Date(year, month, 16);
-            endDate = new Date(year, month + 1, 0, 23, 59, 59, 999);
+            // Second half: 16th to last day of current month (UTC)
+            startDate = new Date(Date.UTC(year, month, 16, 0, 0, 0, 0));
+            endDate = new Date(Date.UTC(year, month + 1, 0, 23, 59, 59, 999)); // Last day of month
         }
 
-        console.log('📅 Current salary period dates:', {
+        console.log('📅 Current salary period dates (UTC):', {
             currentDay,
-            start: startDate.toISOString(),
-            end: endDate.toISOString(),
+            startUTC: startDate.toISOString(),
+            endUTC: endDate.toISOString(),
             startLocal: startDate.toLocaleDateString(),
             endLocal: endDate.toLocaleDateString()
         });
@@ -418,13 +417,18 @@ router.get('/current-salary', protect, async (req, res) => {
             totalSalary += salary;
         });
 
-        res.json({ totalSalary, startDate, endDate });
+        res.json({ 
+            totalSalary, 
+            startDate: startDate.toISOString(), // Send as ISO string
+            endDate: endDate.toISOString() // Send as ISO string
+        });
 
     } catch (error) {
         console.error("Error in /current-salary route:", error);
         res.status(500).json({ message: "Server Error calculating current salary.", error: error.message });
     }
 });
+
 // === MARK work log as paid (admin only) ===
 router.put('/:id/mark-paid', protect, isAdmin, async (req, res) => {
     try {

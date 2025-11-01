@@ -25,23 +25,23 @@ const calculateLogSalary = (log) => {
     return salary;
 };
 
-// --- Helper function to get period dates (FIXED) ---
+// --- Helper function to get period dates (FIXED with UTC) ---
 const getPeriodDates = () => {
     const now = new Date();
-    const year = now.getFullYear();
-    const month = now.getMonth();
-    const currentDay = now.getDate();
+    const year = now.getUTCFullYear();
+    const month = now.getUTCMonth();
+    const currentDay = now.getUTCDate();
     
     let startDate, endDate;
     
     if (currentDay <= 15) {
-        // First half: 1st to 15th of current month
-        startDate = new Date(year, month, 1);
-        endDate = new Date(year, month, 15, 23, 59, 59, 999);
+        // First half: 1st to 15th (UTC)
+        startDate = new Date(Date.UTC(year, month, 1, 0, 0, 0, 0));
+        endDate = new Date(Date.UTC(year, month, 15, 23, 59, 59, 999));
     } else {
-        // Second half: 16th to last day of current month
-        startDate = new Date(year, month, 16);
-        endDate = new Date(year, month + 1, 0, 23, 59, 59, 999); // Last day of current month
+        // Second half: 16th to last day of month (UTC)
+        startDate = new Date(Date.UTC(year, month, 16, 0, 0, 0, 0));
+        endDate = new Date(Date.UTC(year, month + 1, 0, 23, 59, 59, 999));
     }
     
     return { startDate, endDate };
@@ -52,19 +52,17 @@ router.get('/current-period-summary', protect, isAdmin, async (req, res) => {
     try {
         const { startDate, endDate } = getPeriodDates();
 
-        console.log('📅 Period dates:', {
-            start: startDate.toISOString(),
-            end: endDate.toISOString(),
+        console.log('📅 Period dates (UTC):', {
+            startUTC: startDate.toISOString(),
+            endUTC: endDate.toISOString(),
             startLocal: startDate.toLocaleDateString(),
             endLocal: endDate.toLocaleDateString()
         });
 
-        // Find all logs within the current period
         const workLogs = await WorkLog.find({
             workDate: { $gte: startDate, $lte: endDate }
         }).populate('employeeId', 'fullName');
 
-        // Use a Map to aggregate salary by employee
         const payrollMap = new Map();
 
         workLogs.forEach(log => {
@@ -88,12 +86,11 @@ router.get('/current-period-summary', protect, isAdmin, async (req, res) => {
             employeeData.logCount += 1;
         });
 
-        // Convert map values to an array for the response
         const payroll = Array.from(payrollMap.values());
 
         res.json({
-            startDate,
-            endDate,
+            startDate: startDate.toISOString(), // Send as ISO string
+            endDate: endDate.toISOString(), // Send as ISO string
             payroll
         });
 
