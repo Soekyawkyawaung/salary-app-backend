@@ -1,18 +1,64 @@
+// models/workLogModel.js
 const mongoose = require('mongoose');
-const Schema = mongoose.Schema;
 
-const workLogSchema = new Schema({
-    employeeId: { type: Schema.Types.ObjectId, ref: 'User', required: true },
-    subcategoryId: { type: Schema.Types.ObjectId, ref: 'Subcategory' }, // No longer strictly required
-    workDate: { type: Date, required: true },
-    quantity: { type: Number, default: 0 },
-    hoursWorked: { type: Number, default: 0 },
-    rateAtTime: { type: Number, required: true },
-    paymentTypeAtTime: { type: String, required: true, enum: ['perPiece', 'perHour', 'perDay'] },
-    // This new field will store a permanent copy of the name
-    subcategoryNameAtTime: { type: String, required: true }
+const workLogSchema = new mongoose.Schema({
+    employeeId: {
+        type: mongoose.Schema.Types.ObjectId,
+        required: true,
+        ref: 'User'
+    },
+    subcategoryId: {
+        type: mongoose.Schema.Types.ObjectId,
+        // required: true, // Not required for 'delivery' type
+        ref: 'Subcategory',
+        default: null // Allow null if it's a delivery
+    },
+    mainCategoryId: { // Added for Pann War logs
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'MainCategory',
+        default: null
+    },
+    workDate: {
+        type: Date,
+        required: true
+    },
+    quantity: {
+        type: Number,
+        required: function() { return ['perPiece', 'perDozen', 'delivery'].includes(this.paymentTypeAtTime); }, // Required for these types
+        default: 0
+    },
+    hoursWorked: {
+        type: Number,
+        required: function() { return this.paymentTypeAtTime === 'perHour'; }, // Only required for perHour
+        default: 0
+    },
+    rateAtTime: { // The rate at the time the log was created
+        type: Number,
+        required: true,
+        default: 0
+    },
+    paymentTypeAtTime: { // The payment type at the time the log was created
+        type: String,
+        required: true,
+        // --- THIS IS THE FIX ---
+        enum: ['perPiece', 'perDozen', 'perHour', 'perDay', 'delivery'] // Added 'delivery'
+        // --- END FIX ---
+    },
+    subcategoryNameAtTime: { // Store the name of the subcategory (or description like Pann War)
+        type: String,
+        required: true
+    },
+    paymentStatus: {
+        type: String,
+        enum: ['unpaid', 'paid', 'na'], // 'na' might be useful for deliveries
+        default: 'unpaid'
+    },
+    paymentDate: { // Date when marked as paid
+        type: Date,
+        default: null
+    }
 }, {
-    timestamps: true
+    timestamps: true // Adds createdAt and updatedAt automatically
 });
 
 const WorkLog = mongoose.model('WorkLog', workLogSchema);

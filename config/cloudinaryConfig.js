@@ -1,6 +1,10 @@
+// In: config/cloudinaryConfig.js
+
 const cloudinary = require('cloudinary').v2;
-const { CloudinaryStorage } = require('multer-storage-cloudinary');
-const multer = require('multer');
+const dotenv = require('dotenv');
+
+// Load environment variables from your .env file
+dotenv.config(); 
 
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
@@ -8,14 +12,5 @@ cloudinary.config({
   api_secret: process.env.CLOUDINARY_API_SECRET
 });
 
-const storage = new CloudinaryStorage({
-  cloudinary: cloudinary,
-  params: {
-    folder: 'salary-app-profiles',
-    allowed_formats: ['jpg', 'png'],
-  },
-});
-
-const upload = multer({ storage: storage });
-
-module.exports = upload;
+// Export the configured cloudinary object
+module.exports = cloudinary;

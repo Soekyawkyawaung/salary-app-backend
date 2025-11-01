@@ -1,27 +1,26 @@
 const mongoose = require('mongoose');
 const Schema = mongoose.Schema;
 
-const subcategorySchema = new Schema({
+const subcategorySchema = new mongoose.Schema({
     name: {
         type: String,
         required: true,
+        trim: true
     },
-    // Link to the main category
     mainCategory: {
-        type: Schema.Types.ObjectId,
+        type: mongoose.Schema.Types.ObjectId,
         ref: 'MainCategory',
-        required: true,
+        required: true
     },
-    // Define the type of payment
     paymentType: {
         type: String,
         required: true,
-        enum: ['perPiece', 'perHour', 'perDay'], // Only these values are allowed
+        enum: ['perPiece', 'perDozen', 'perHour', 'perDay'] // Make sure perDozen is included
     },
-    // A general name for the payment rate
     rate: {
         type: Number,
         required: true,
+        min: 0
     }
 }, {
     timestamps: true
