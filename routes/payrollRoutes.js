@@ -17,7 +17,7 @@ const calculateLogSalary = (log) => {
             salary = (log.hoursWorked || 0) * rate;
             break;
         case 'perDay':
-            salary = rate; // Assuming 1 day
+            salary = rate;
             break;
         default:
             break;
@@ -25,33 +25,51 @@ const calculateLogSalary = (log) => {
     return salary;
 };
 
-// --- NEW ROUTE: Get TOTAL salary summary for Admin Dashboard ---
-router.get('/current-period-summary', protect, isAdmin, async (req, res) => {
+// --- Helper function to get period dates (FIXED) ---
+const getPeriodDates = () => {
     const now = new Date();
+    const year = now.getFullYear();
+    const month = now.getMonth();
+    const currentDay = now.getDate();
+    
     let startDate, endDate;
     
-    if (now.getDate() <= 15) {
-        // First half of the month
-        startDate = new Date(now.getFullYear(), now.getMonth(), 1);
-        endDate = new Date(now.getFullYear(), now.getMonth(), 15, 23, 59, 59, 999);
+    if (currentDay <= 15) {
+        // First half: 1st to 15th of current month
+        startDate = new Date(year, month, 1);
+        endDate = new Date(year, month, 15, 23, 59, 59, 999);
     } else {
-        // Second half of the month
-        startDate = new Date(now.getFullYear(), now.getMonth(), 16);
-        endDate = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999); // 0th day of next month is last day of current
+        // Second half: 16th to last day of current month
+        startDate = new Date(year, month, 16);
+        endDate = new Date(year, month + 1, 0, 23, 59, 59, 999); // Last day of current month
     }
+    
+    return { startDate, endDate };
+};
 
+// --- NEW ROUTE: Get TOTAL salary summary for Admin Dashboard ---
+router.get('/current-period-summary', protect, isAdmin, async (req, res) => {
     try {
+        const { startDate, endDate } = getPeriodDates();
+
+        console.log('📅 Period dates:', {
+            start: startDate.toISOString(),
+            end: endDate.toISOString(),
+            startLocal: startDate.toLocaleDateString(),
+            endLocal: endDate.toLocaleDateString()
+        });
+
         // Find all logs within the current period
         const workLogs = await WorkLog.find({
             workDate: { $gte: startDate, $lte: endDate }
-        }).populate('employeeId', 'fullName'); // Populate employee info
+        }).populate('employeeId', 'fullName');
 
         // Use a Map to aggregate salary by employee
         const payrollMap = new Map();
 
         workLogs.forEach(log => {
             const employeeId = log.employeeId?._id.toString();
-            if (!employeeId) return; // Skip logs without a valid employee
+            if (!employeeId) return;
 
             const employeeName = log.employeeId.fullName;
             const logSalary = calculateLogSalary(log);
@@ -76,7 +94,7 @@ router.get('/current-period-summary', protect, isAdmin, async (req, res) => {
         res.json({
             startDate,
             endDate,
-            payroll // The detailed breakdown per employee
+            payroll
         });
 
     } catch (error) {
@@ -85,25 +103,34 @@ router.get('/current-period-summary', protect, isAdmin, async (req, res) => {
     }
 });
 
-
-// --- GET SALARY SUMMARY FOR A SPECIFIC EMPLOYEE (for detail page) ---
-// --- GET SALARY SUMMARY FOR A SPECIFIC EMPLOYEE (for detail page) ---
+// --- GET SALARY SUMMARY FOR A SPECIFIC EMPLOYEE ---
 router.get('/employee-summary/:employeeId', protect, isAdmin, async (req, res) => {
     const { employeeId } = req.params;
     const { period } = req.query; // 'firstHalf' or 'secondHalf'
 
-    const now = new Date();
-    let startDate, endDate;
-
-    if (period === 'secondHalf') {
-        startDate = new Date(now.getFullYear(), now.getMonth(), 16);
-        endDate = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
-    } else {
-        startDate = new Date(now.getFullYear(), now.getMonth(), 1);
-        endDate = new Date(now.getFullYear(), now.getMonth(), 15, 23, 59, 59, 999);
-    }
-
     try {
+        const now = new Date();
+        const year = now.getFullYear();
+        const month = now.getMonth();
+        
+        let startDate, endDate;
+
+        if (period === 'secondHalf') {
+            startDate = new Date(year, month, 16);
+            endDate = new Date(year, month + 1, 0, 23, 59, 59, 999);
+        } else {
+            startDate = new Date(year, month, 1);
+            endDate = new Date(year, month, 15, 23, 59, 59, 999);
+        }
+
+        console.log('📅 Employee period dates:', {
+            period,
+            start: startDate.toISOString(),
+            end: endDate.toISOString(),
+            startLocal: startDate.toLocaleDateString(),
+            endLocal: endDate.toLocaleDateString()
+        });
+
         const workLogs = await WorkLog.find({
             employeeId: employeeId,
             workDate: { $gte: startDate, $lte: endDate }
@@ -111,7 +138,7 @@ router.get('/employee-summary/:employeeId', protect, isAdmin, async (req, res) =
 
         let totalSalary = 0;
         workLogs.forEach(log => {
-            totalSalary += calculateLogSalary(log); // Use the helper function
+            totalSalary += calculateLogSalary(log);
         });
 
         res.json({

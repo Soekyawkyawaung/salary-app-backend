@@ -363,26 +363,38 @@ router.get('/pannwar-deliveries/all', protect, isAdmin, async (req, res) => {
     }
 });
 
-// === GET CURRENT SALARY PERIOD calculation for logged-in user ===
+// In workLogRoutes.js - update the /current-salary route
 router.get('/current-salary', protect, async (req, res) => {
     try {
         const today = new Date();
         const year = today.getFullYear();
-        const month = today.getMonth(); // 0-based
+        const month = today.getMonth();
+        const currentDay = today.getDate();
+        
         let startDate, endDate;
 
-        if (today.getDate() <= 15) {
+        if (currentDay <= 15) {
+            // First half: 1st to 15th of current month
             startDate = new Date(year, month, 1);
             endDate = new Date(year, month, 15, 23, 59, 59, 999);
         } else {
+            // Second half: 16th to last day of current month
             startDate = new Date(year, month, 16);
             endDate = new Date(year, month + 1, 0, 23, 59, 59, 999);
         }
 
+        console.log('📅 Current salary period dates:', {
+            currentDay,
+            start: startDate.toISOString(),
+            end: endDate.toISOString(),
+            startLocal: startDate.toLocaleDateString(),
+            endLocal: endDate.toLocaleDateString()
+        });
+
         const workLogs = await WorkLog.find({
             employeeId: req.user.id,
             workDate: { $gte: startDate, $lte: endDate },
-             paymentTypeAtTime: { $ne: 'delivery' } // Exclude deliveries from salary calc
+            paymentTypeAtTime: { $ne: 'delivery' }
         });
 
         let totalSalary = 0;
@@ -398,10 +410,10 @@ router.get('/current-salary', protect, async (req, res) => {
                     salary = (log.hoursWorked || 0) * rate;
                     break;
                 case 'perDay':
-                    salary = rate; // Assuming 1 day
+                    salary = rate;
                     break;
                 default:
-                    break; // Excludes 'delivery'
+                    break;
             }
             totalSalary += salary;
         });
@@ -413,7 +425,6 @@ router.get('/current-salary', protect, async (req, res) => {
         res.status(500).json({ message: "Server Error calculating current salary.", error: error.message });
     }
 });
-
 // === MARK work log as paid (admin only) ===
 router.put('/:id/mark-paid', protect, isAdmin, async (req, res) => {
     try {
