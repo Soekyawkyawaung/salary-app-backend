@@ -3,8 +3,10 @@ const router = express.Router();
 const Subcategory = require('../models/subcategoryModel');
 const { protect, isAdmin } = require('../middleware/authMiddleware');
 
-// GET all subcategories
-router.get('/', async (req, res) => {
+// --- THIS IS THE FIX ---
+// GET all subcategories (Added 'protect' middleware)
+router.get('/', protect, async (req, res) => {
+// --- END FIX ---
     try {
         // Add .populate() to get the name from the linked MainCategory
         const subcategories = await Subcategory.find({}).populate('mainCategory', 'name');
@@ -14,20 +16,17 @@ router.get('/', async (req, res) => {
         res.status(500).json({ message: 'Server Error' });
     }
 });
-
 // POST a new subcategory
-
 router.post('/', protect, isAdmin, async (req, res) => {
     try {
         const { name, mainCategory, paymentType, rate } = req.body;
         
-        // Validate required fields
         if (!name || !mainCategory || !paymentType || !rate) {
             return res.status(400).json({ message: 'All fields are required' });
         }
 
-        // Validate paymentType
-        const validPaymentTypes = ['perPiece', 'perDozen', 'perHour', 'perDay'];
+        // --- ADDED "ပိဿာ" TO THIS LIST ---
+        const validPaymentTypes = ['perPiece', 'perDozen', 'perHour', 'perDay', 'ပိဿာ'];
         if (!validPaymentTypes.includes(paymentType)) {
             return res.status(400).json({ 
                 message: `Invalid payment type. Must be one of: ${validPaymentTypes.join(', ')}` 
@@ -62,8 +61,6 @@ router.delete('/:id', protect, isAdmin, async (req, res) => {
     }
 });
 
-// UPDATE a subcategory - now supports name, rate, and paymentType
-
 // UPDATE a subcategory
 router.put('/:id', protect, isAdmin, async (req, res) => {
     try {
@@ -71,15 +68,14 @@ router.put('/:id', protect, isAdmin, async (req, res) => {
         const subcategory = await Subcategory.findById(req.params.id);
 
         if (!subcategory) {
-            return res.status(404).json({ message: 'Subcategory not found' });
+            return res.status(4404).json({ message: 'Subcategory not found' });
         }
 
-        // Update fields if provided
         if (name !== undefined) subcategory.name = name;
         if (rate !== undefined) subcategory.rate = rate;
         if (paymentType !== undefined) {
-            // Validate paymentType if provided - MUST MATCH THE MODEL ENUM
-            const validPaymentTypes = ['perPiece', 'perDozen', 'perHour', 'perDay'];
+            // --- ADDED "ပိဿာ" TO THIS LIST ---
+            const validPaymentTypes = ['perPiece', 'perDozen', 'perHour', 'perDay', 'ပိဿာ'];
             if (!validPaymentTypes.includes(paymentType)) {
                 return res.status(400).json({ 
                     message: `Invalid payment type. Must be one of: ${validPaymentTypes.join(', ')}` 
@@ -90,7 +86,6 @@ router.put('/:id', protect, isAdmin, async (req, res) => {
         
         const updatedSubcategory = await subcategory.save();
         
-        // Populate the mainCategory field before sending response
         await updatedSubcategory.populate('mainCategory', 'name');
         
         res.json(updatedSubcategory);

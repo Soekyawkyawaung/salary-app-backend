@@ -15,7 +15,7 @@ const subcategorySchema = new mongoose.Schema({
     paymentType: {
         type: String,
         required: true,
-        enum: ['perPiece', 'perDozen', 'perHour', 'perDay'] // Make sure perDozen is included
+        enum: ['perPiece', 'perDozen', 'perHour', 'perDay','ပိဿာ'] // Make sure perDozen is included
     },
     rate: {
         type: Number,
