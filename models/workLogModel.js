@@ -56,6 +56,12 @@ const workLogSchema = new mongoose.Schema({
     paymentDate: { // Date when marked as paid
         type: Date,
         default: null
+    },
+    
+    location: {
+        type: String,
+        enum: ['Golden Falcon (၂၈လမ်း ဆိုင်)', 'ရွှေခေါင်းလောင်း စက်ရုံ', 'N/A'],
+        default: 'N/A'
     }
 }, {
     timestamps: true // Adds createdAt and updatedAt automatically

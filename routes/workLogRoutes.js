@@ -7,39 +7,55 @@ const { protect, isAdmin } = require('../middleware/authMiddleware');
 // === CREATE a new work log ===
 router.post('/', protect, async (req, res) => {
     try {
-        const { subcategoryId, quantity, workDate, hoursWorked } = req.body;
+        // --- 1. Destructure new 'location' field ---
+        const { subcategoryId, quantity, workDate, hoursWorked, location } = req.body;
 
-        // --- Input Validation ---
         if (!subcategoryId || !workDate) {
             return res.status(400).json({ message: 'Subcategory ID and work date are required.' });
         }
 
-        const subcat = await Subcategory.findById(subcategoryId);
+        // --- 2. Populate mainCategory to check its name ---
+        const subcat = await Subcategory.findById(subcategoryId).populate('mainCategory', 'name');
         if (!subcat) {
             return res.status(404).json({ message: 'Subcategory not found.' });
         }
+        
+        // --- 3. Add Location Validation ---
+        const mainCatName = subcat.mainCategory?.name;
+        let locationValue = 'N/A'; // Default location
 
-        // --- Prepare Data based on Payment Type ---
+        if (mainCatName === 'စာအုပ်ချုပ်') {
+            const validLocations = ['Golden Falcon (၂၈လမ်း ဆိုင်)', 'ရွှေခေါင်းလောင်း စက်ရုံ'];
+            if (!location || !validLocations.includes(location)) {
+                return res.status(400).json({ 
+                    message: 'Please select a valid location for "စာအုပ်ချုပ်".' 
+                });
+            }
+            locationValue = location;
+        }
+        // --- End Location Validation ---
+
+        // --- (Existing quantity/hours logic) ---
         let quantityValue = 0;
         let hoursWorkedValue = 0;
 
-        if (subcat.paymentType === 'perPiece' || subcat.paymentType === 'perDozen') {
+        if (subcat.paymentType === 'perPiece' || subcat.paymentType === 'perDozen' || subcat.paymentType === 'ပိဿာ') {
             if (quantity === undefined || quantity === null || typeof quantity !== 'number' || quantity < 0) {
-                return res.status(400).json({ message: `A valid, non-negative quantity is required for ${subcat.paymentType} work.` });
+                return res.status(400).json({ message: `A valid, non-negative quantity is required.` });
             }
             quantityValue = quantity;
         } else if (subcat.paymentType === 'perHour') {
             if (hoursWorked === undefined || hoursWorked === null || typeof hoursWorked !== 'number' || hoursWorked < 0) {
-                return res.status(400).json({ message: 'Valid, non-negative hours worked are required for per hour work.' });
+                return res.status(400).json({ message: 'Valid, non-negative hours worked are required.' });
             }
             hoursWorkedValue = hoursWorked;
         } else if (subcat.paymentType === 'perDay') {
-             // No quantity needed, but ensure values are 0 if passed accidentally
              quantityValue = 0;
              hoursWorkedValue = 0;
         }
+        // --- End quantity/hours logic ---
 
-        // --- Create and Save Work Log ---
+        // --- 4. Create and Save Work Log (add 'location') ---
         const workLog = new WorkLog({
             employeeId: req.user.id,
             subcategoryId,
@@ -49,7 +65,8 @@ router.post('/', protect, async (req, res) => {
             rateAtTime: subcat.rate,
             paymentTypeAtTime: subcat.paymentType,
             subcategoryNameAtTime: subcat.name,
-            paymentStatus: 'unpaid'
+            paymentStatus: 'unpaid',
+            location: locationValue // --- Add this line ---
         });
 
         await workLog.save();
@@ -465,6 +482,40 @@ router.put('/:id/mark-paid', protect, isAdmin, async (req, res) => {
     }
 });
 
+// --- NEW ROUTE: MARK ALL AS PAID ---
+router.put('/mark-all-paid', protect, isAdmin, async (req, res) => {
+    try {
+        const { logIds } = req.body; // Expect an array of work log IDs
+
+        if (!Array.isArray(logIds) || logIds.length === 0) {
+            return res.status(400).json({ message: 'An array of log IDs is required.' });
+        }
+
+        const updateResult = await WorkLog.updateMany(
+            { 
+                _id: { $in: logIds }, // Find all logs whose ID is in the array
+                paymentStatus: { $ne: 'paid' } // Only update those that are not already paid
+            }, 
+            { 
+                $set: { 
+                    paymentStatus: 'paid', 
+                    paymentDate: new Date() 
+                } 
+            }
+        );
+
+        if (updateResult.nModified === 0) {
+             return res.json({ message: 'No unpaid logs were found to update.' });
+        }
+
+        res.json({ message: `Successfully marked ${updateResult.nModified} logs as paid.` });
+
+    } catch (error) {
+        console.error("Error marking all logs as paid:", error);
+        res.status(500).json({ message: 'Server Error marking all logs as paid.', error: error.message });
+    }
+});
+// --- END NEW ROUTE ---
 
 // === GET ALL WORKLOGS FOR A SPECIFIC EMPLOYEE (Admin - for detail page) ===
 router.get('/employee/:employeeId', protect, isAdmin, async (req, res) => {
