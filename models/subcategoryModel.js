@@ -1,11 +1,9 @@
 const mongoose = require('mongoose');
-const Schema = mongoose.Schema;
 
-const subcategorySchema = new mongoose.Schema({
+const subcategorySchema = mongoose.Schema({
     name: {
         type: String,
-        required: true,
-        trim: true
+        required: true
     },
     mainCategory: {
         type: mongoose.Schema.Types.ObjectId,
@@ -15,17 +13,20 @@ const subcategorySchema = new mongoose.Schema({
     paymentType: {
         type: String,
         required: true,
-        enum: ['perPiece', 'perDozen', 'perHour', 'perDay','ပိဿာ'] // Make sure perDozen is included
+        enum: ['perPiece', 'perDozen', 'perHour', 'perDay', 'ပိဿာ']
     },
     rate: {
         type: Number,
-        required: true,
-        min: 0
+        required: true
+    },
+    // --- ADD THIS SECTION ---
+    order: {
+        type: Number,
+        default: 0 // Default to 0 so existing items don't break
     }
+    // ------------------------
 }, {
     timestamps: true
 });
 
-const Subcategory = mongoose.model('Subcategory', subcategorySchema);
-
-module.exports = Subcategory;
+module.exports = mongoose.model('Subcategory', subcategorySchema);

@@ -1,14 +1,12 @@
+// routes/subcategoryRoutes.js
 const express = require('express');
 const router = express.Router();
 const Subcategory = require('../models/subcategoryModel');
 const { protect, isAdmin } = require('../middleware/authMiddleware');
 
-// --- THIS IS THE FIX ---
-// GET all subcategories (Added 'protect' middleware)
+// GET all subcategories
 router.get('/', protect, async (req, res) => {
-// --- END FIX ---
     try {
-        // Add .populate() to get the name from the linked MainCategory
         const subcategories = await Subcategory.find({}).populate('mainCategory', 'name');
         res.json(subcategories);
     } catch (error) {
@@ -16,6 +14,7 @@ router.get('/', protect, async (req, res) => {
         res.status(500).json({ message: 'Server Error' });
     }
 });
+
 // POST a new subcategory
 router.post('/', protect, isAdmin, async (req, res) => {
     try {
@@ -25,7 +24,6 @@ router.post('/', protect, isAdmin, async (req, res) => {
             return res.status(400).json({ message: 'All fields are required' });
         }
 
-        // --- ADDED "ပိဿာ" TO THIS LIST ---
         const validPaymentTypes = ['perPiece', 'perDozen', 'perHour', 'perDay', 'ပိဿာ'];
         if (!validPaymentTypes.includes(paymentType)) {
             return res.status(400).json({ 
@@ -61,20 +59,27 @@ router.delete('/:id', protect, isAdmin, async (req, res) => {
     }
 });
 
-// UPDATE a subcategory
+// --- UPDATE (PUT) Route - MODIFIED ---
 router.put('/:id', protect, isAdmin, async (req, res) => {
     try {
-        const { name, rate, paymentType } = req.body;
+        // 1. Added 'mainCategory' to the destructured body
+        const { name, rate, paymentType, mainCategory } = req.body;
+        
         const subcategory = await Subcategory.findById(req.params.id);
 
         if (!subcategory) {
-            return res.status(4404).json({ message: 'Subcategory not found' });
+            return res.status(404).json({ message: 'Subcategory not found' });
         }
 
         if (name !== undefined) subcategory.name = name;
         if (rate !== undefined) subcategory.rate = rate;
+        
+        // 2. Add logic to update the mainCategory
+        if (mainCategory !== undefined) {
+            subcategory.mainCategory = mainCategory;
+        }
+
         if (paymentType !== undefined) {
-            // --- ADDED "ပိဿာ" TO THIS LIST ---
             const validPaymentTypes = ['perPiece', 'perDozen', 'perHour', 'perDay', 'ပိဿာ'];
             if (!validPaymentTypes.includes(paymentType)) {
                 return res.status(400).json({ 
@@ -86,6 +91,7 @@ router.put('/:id', protect, isAdmin, async (req, res) => {
         
         const updatedSubcategory = await subcategory.save();
         
+        // Populate the name so the frontend updates immediately without refresh issues
         await updatedSubcategory.populate('mainCategory', 'name');
         
         res.json(updatedSubcategory);
@@ -97,4 +103,32 @@ router.put('/:id', protect, isAdmin, async (req, res) => {
         res.status(500).json({ message: 'Server Error', error: error.message });
     }
 });
+
+// Reorder Route
+router.post('/reorder', protect, isAdmin, async (req, res) => {
+    try {
+        const { newOrder } = req.body; 
+
+        if (!Array.isArray(newOrder)) {
+            return res.status(400).json({ message: 'Invalid data' });
+        }
+
+        const bulkOps = newOrder.map(item => ({
+            updateOne: {
+                filter: { _id: item.id },
+                update: { $set: { order: item.order } } 
+            }
+        }));
+
+        if (bulkOps.length > 0) {
+            await Subcategory.bulkWrite(bulkOps);
+        }
+
+        res.json({ message: 'Order updated' });
+    } catch (error) {
+        console.error('Error reordering:', error);
+        res.status(500).json({ message: 'Server Error' });
+    }
+});
+
 module.exports = router;
