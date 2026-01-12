@@ -62,7 +62,22 @@ const workLogSchema = new mongoose.Schema({
         type: String,
         enum: ['Golden Falcon (၂၈လမ်း ဆိုင်)', 'ရွှေခေါင်းလောင်း စက်ရုံ', 'N/A'],
         default: 'N/A'
+    },
+
+    editedTotalPayment: {
+        type: Number,
+        default: null
+    },
+    isAdminEdited: {
+        type: Boolean,
+        default: false
+    },
+
+    isAdminEdited: {
+        type: Boolean,
+        default: false
     }
+
 }, {
     timestamps: true // Adds createdAt and updatedAt automatically
 });

@@ -3,32 +3,60 @@ const express = require('express');
 const router = express.Router();
 const Conversation = require('../models/conversationModel');
 const Message = require('../models/messageModel');
-const User = require('../models/userModel'); // Needed for fetching users
-const { protect, isAdmin } = require('../middleware/authMiddleware'); // Your auth middleware
+const User = require('../models/userModel'); 
+const { protect, isAdmin } = require('../middleware/authMiddleware'); 
 const upload = require('../middleware/chatImageUpload');
 
-// --- FETCH Conversations for Logged-in User ---
+// --- GET ALL CONVERSATIONS ---
 router.get('/', protect, async (req, res) => {
     try {
-        const userId = req.user.id;
-        let conversations = await Conversation.find({ participants: userId })
-            .populate('participants', 'fullName profilePictureUrl') // Populate participant details
-            .populate('groupAdmin', 'fullName') // Populate admin if group
-            .populate({
-                path: 'lastMessage',
-                select: 'content imageUrl sender createdAt', // Select all needed fields
-                populate: { path: 'sender', select: 'fullName' }
-            })
-            // --- END FIX ---
-            .sort({ updatedAt: -1 }); // Sort by most recently updated
+        const conversations = await Conversation.find({ 
+            participants: req.user._id 
+        })
+        .populate('participants', 'fullName profilePictureUrl')
+        .populate('groupAdmin', 'fullName')
+        .populate({
+            path: 'lastMessage',
+            select: 'content imageUrl sender createdAt readBy',
+            populate: { 
+                path: 'sender', 
+                select: 'fullName profilePictureUrl' 
+            }
+        })
+        .sort({ updatedAt: -1 });
 
-        // Optional: Filter out conversations where lastMessage is null if desired
-        // conversations = conversations.filter(c => c.lastMessage);
+        // --- FIX: Reset unread counts for this user on initial fetch after login ---
+        // This ensures when a user logs in, they don't see old unread counts
+        const userId = req.user._id.toString();
+        
+        const updatedConversations = await Promise.all(conversations.map(async (convo) => {
+            // Check if this user has unread counts
+            const userUnreadCount = convo.unreadCounts?.get(userId) || 0;
+            
+            // If there are unread counts from previous session, reset them
+            if (userUnreadCount > 0) {
+                try {
+                    const updateField = `unreadCounts.${userId}`;
+                    await Conversation.findByIdAndUpdate(
+                        convo._id,
+                        { $set: { [updateField]: 0 } },
+                        { new: false } // Don't wait for return, just update
+                    );
+                    
+                    // Update the local copy
+                    convo.unreadCounts.set(userId, 0);
+                } catch (updateError) {
+                    console.error("Error resetting unread count:", updateError);
+                }
+            }
+            
+            return convo;
+        }));
 
-        res.json(conversations);
+        res.json(updatedConversations);
     } catch (error) {
         console.error("Error fetching conversations:", error);
-        res.status(500).json({ message: "Server error fetching conversations." });
+        res.status(500).json({ message: "Server Error" });
     }
 });
 
@@ -37,55 +65,42 @@ router.post('/', protect, async (req, res) => {
     const { recipientId } = req.body;
     const senderId = req.user.id;
 
-    if (!recipientId) {
-        return res.status(400).json({ message: "Recipient ID is required." });
-    }
-    if (recipientId === senderId) {
-         return res.status(400).json({ message: "Cannot start a conversation with yourself." });
-    }
+    if (!recipientId) return res.status(400).json({ message: "Recipient ID is required." });
+    if (recipientId === senderId) return res.status(400).json({ message: "Cannot start a conversation with yourself." });
 
     try {
-        // Check if a DM conversation already exists between these two users
         let conversation = await Conversation.findOne({
             isGroupChat: false,
-            participants: { $all: [senderId, recipientId], $size: 2 } // Exactly these two participants
-        }).populate('participants', 'fullName profilePictureUrl'); // Populate details for frontend
+            participants: { $all: [senderId, recipientId], $size: 2 } 
+        }).populate('participants', 'fullName profilePictureUrl'); 
 
         if (conversation) {
-            // Conversation already exists, return it
             res.status(200).json(conversation);
         } else {
-            // Create a new DM conversation
             const newConversation = new Conversation({
                 participants: [senderId, recipientId],
                 isGroupChat: false
             });
             const savedConversation = await newConversation.save();
-            // Populate participant details before sending back
             await savedConversation.populate('participants', 'fullName profilePictureUrl');
             res.status(201).json(savedConversation);
         }
     } catch (error) {
         console.error("Error starting/getting DM conversation:", error);
-        res.status(500).json({ message: "Server error handling conversation." });
+        res.status(500).json({ message: "Server error." });
     }
 });
 
 // --- CREATE a Group Chat ---
 router.post('/group', protect, async (req, res) => {
-    const { groupName, participantIds } = req.body; // Expecting an array of user IDs
+    const { groupName, participantIds } = req.body; 
     const adminId = req.user.id;
 
     if (!groupName || !participantIds || !Array.isArray(participantIds) || participantIds.length < 1) {
-        return res.status(400).json({ message: "Group name and at least one participant (besides yourself) are required." });
+        return res.status(400).json({ message: "Group name and at least one participant are required." });
     }
 
-    // Add the admin to the participants list if not already included
-    const allParticipants = [...new Set([adminId, ...participantIds])]; // Use Set to avoid duplicates
-
-    if (allParticipants.length < 2) {
-         return res.status(400).json({ message: "A group chat needs at least 2 participants (including admin)." });
-    }
+    const allParticipants = [...new Set([adminId, ...participantIds])]; 
 
     try {
         const newGroupConversation = new Conversation({
@@ -95,7 +110,6 @@ router.post('/group', protect, async (req, res) => {
             groupAdmin: adminId
         });
         const savedGroup = await newGroupConversation.save();
-        // Populate details before sending back
         await savedGroup.populate('participants', 'fullName profilePictureUrl');
         await savedGroup.populate('groupAdmin', 'fullName');
 
@@ -106,103 +120,111 @@ router.post('/group', protect, async (req, res) => {
     }
 });
 
+// --- UPDATE GROUP INFO (Name & Notice) ---
+router.put('/group/:conversationId', protect, async (req, res) => {
+    try {
+        const { conversationId } = req.params;
+        const { groupName, groupNotice } = req.body;
 
-// --- FETCH Messages for a Conversation (Add Pagination Later) ---
-router.get('/messages/:conversationId', protect, async (req, res) => {
-    const { conversationId } = req.params;
-    const userId = req.user.id;
+        const updatedChat = await Conversation.findByIdAndUpdate(
+            conversationId,
+            {
+                $set: {
+                    groupName: groupName,
+                    groupNotice: groupNotice
+                }
+            },
+            { new: true } 
+        )
+        .populate("participants", "fullName profilePictureUrl")
+        .populate("groupAdmin", "fullName");
+
+        if (!updatedChat) return res.status(404).json({ message: "Chat not found" });
+
+        res.status(200).json(updatedChat);
+    } catch (error) {
+        console.error("Error updating group info:", error);
+        res.status(500).json({ message: "Server Error updating group info" });
+    }
+});
+
+// --- ADD MEMBERS TO GROUP ---
+router.put('/groupadd', protect, async (req, res) => {
+    const { conversationId, newParticipantIds } = req.body;
+
+    if (!conversationId || !newParticipantIds || !Array.isArray(newParticipantIds)) {
+        return res.status(400).json({ message: "Invalid data." });
+    }
 
     try {
-        // Optional but recommended: Check if the user is part of this conversation
-        const conversation = await Conversation.findOne({ _id: conversationId, participants: userId });
-        if (!conversation) {
-            return res.status(403).json({ message: "Not authorized to view these messages." });
-        }
+        const updatedConversation = await Conversation.findByIdAndUpdate(
+            conversationId,
+            { $addToSet: { participants: { $each: newParticipantIds } } },
+            { new: true }
+        )
+        .populate('participants', 'fullName profilePictureUrl')
+        .populate('groupAdmin', 'fullName');
 
+        if (!updatedConversation) return res.status(404).json({ message: "Conversation not found." });
+
+        res.json(updatedConversation);
+    } catch (error) {
+        console.error("Error adding members:", error);
+        res.status(500).json({ message: "Server error adding members." });
+    }
+});
+
+// --- FETCH Messages ---
+router.get('/messages/:conversationId', protect, async (req, res) => {
+    const { conversationId } = req.params;
+    try {
         const messages = await Message.find({ conversation: conversationId })
-            .populate('sender', 'fullName profilePictureUrl') // Populate sender details
-            .sort({ createdAt: 1 }); // Oldest messages first
-
+            .populate('sender', 'fullName profilePictureUrl')
+            .sort({ createdAt: 1 }); 
         res.json(messages);
     } catch (error) {
-        console.error(`Error fetching messages for conversation ${conversationId}:`, error);
         res.status(500).json({ message: "Server error fetching messages." });
     }
 });
 
-// routes/chatRoutes.js
-
-// ... (other routes like GET /, POST /, POST /group, etc. are fine) ...
-
-// --- MARK Conversation as Read (CORRECTED) ---
+// --- MARK Conversation as Read (FIXED: FORCE UPDATE) ---
 router.post('/read/:conversationId', protect, async (req, res) => {
     const { conversationId } = req.params;
     const userId = req.user.id;
 
     try {
-        const conversation = await Conversation.findById(conversationId);
-        if (!conversation) {
+        // 1. Construct the update key
+        const updateField = `unreadCounts.${userId}`;
+
+        // 2. FORCE UPDATE the database to 0. 
+        const updatedConversation = await Conversation.findByIdAndUpdate(
+            conversationId,
+            { $set: { [updateField]: 0 } },
+            { new: true }
+        );
+
+        if (!updatedConversation) {
             return res.status(404).json({ message: "Conversation not found." });
         }
-        if (!conversation.participants.includes(userId)) {
-            return res.status(403).json({ message: "Not authorized." });
-        }
-        
-        const updateField = `unreadCounts.${userId}`;
-        let populatedConversation; // We will store the final populated doc here
 
-        if (conversation.unreadCounts.get(userId) > 0) {
-            // --- IF UNREAD > 0: Update DB and return populated doc ---
-            const updatedConversation = await Conversation.findByIdAndUpdate(
-                conversationId,
-                { $set: { [updateField]: 0 } },
-                { new: true }
-            );
-
-            // Emit to socket
-            const io = req.app.get('socketio'); 
-            if (io) {
-                // We must populate *before* emitting to the socket
-                await updatedConversation.populate([
-                    { path: 'participants', select: 'fullName profilePictureUrl' },
-                    { path: 'groupAdmin', select: 'fullName' },
-                    { 
-                        path: 'lastMessage',
-                        select: 'content imageUrl sender createdAt',
-                        populate: { path: 'sender', select: 'fullName' }
-                    }
-                ]);
-                io.to(conversationId).emit('conversationUpdated', updatedConversation);
+        // 3. Populate details for the frontend
+        await updatedConversation.populate([
+            { path: 'participants', select: 'fullName profilePictureUrl' },
+            { path: 'groupAdmin', select: 'fullName' },
+            { 
+                path: 'lastMessage',
+                select: 'content imageUrl sender createdAt',
+                populate: { path: 'sender', select: 'fullName' }
             }
-            
-            // Re-assign for the final response
-            populatedConversation = updatedConversation;
+        ]);
 
-        } else {
-            // --- IF UNREAD == 0: Just return the populated doc ---
-            // The document is already read, but ChatWindow still needs
-            // the populated 'lastMessage' to avoid "No Content"
-            populatedConversation = conversation; // Use the one we found at the start
-        }
-
-        // --- COMMON POPULATE STEP ---
-        // Ensure the conversation sent back to the user is *always* fully populated
-        // This runs for both if/else cases if not already populated
-        // We check if lastMessage.content exists, a simple way to see if it's populated
-        if (!populatedConversation.lastMessage || populatedConversation.lastMessage.content === undefined) {
-             await populatedConversation.populate([
-                { path: 'participants', select: 'fullName profilePictureUrl' },
-                { path: 'groupAdmin', select: 'fullName' },
-                { 
-                    path: 'lastMessage',
-                    select: 'content imageUrl sender createdAt',
-                    populate: { path: 'sender', select: 'fullName' }
-                }
-            ]);
+        // 4. Emit socket event so other devices/tabs update instantly
+        const io = req.app.get('socketio'); 
+        if (io) {
+            io.to(conversationId).emit('conversationUpdated', updatedConversation);
         }
         
-        // Return the fully populated doc
-        res.status(200).json(populatedConversation); 
+        res.status(200).json(updatedConversation); 
 
     } catch (error) {
         console.error("Error marking chat as read:", error);
@@ -210,43 +232,29 @@ router.post('/read/:conversationId', protect, async (req, res) => {
     }
 });
 
-
-
-// (Admins see all approved employees, Employees might only see Admin)
+// --- FETCH CHAT USERS ---
 router.get('/users/chat-list', protect, async (req, res) => {
      try {
          let query = {};
          if (req.user.role === 'admin') {
-             // Admin sees all approved employees (excluding self)
              query = { role: 'employee', status: 'approved', _id: { $ne: req.user.id } };
          } else {
-             // Employee sees only admins (excluding self)
              query = { role: 'admin', _id: { $ne: req.user.id } };
-             // // OR Employee sees admin AND other approved employees (uncomment if desired)
-             // query = {
-             //     status: 'approved',
-             //     _id: { $ne: req.user.id }
-             // };
          }
 
          const users = await User.find(query)
-             .select('fullName profilePictureUrl email') // Select necessary fields
+             .select('fullName profilePictureUrl email role')
              .sort({ fullName: 1 });
          res.json(users);
      } catch (error) {
-        console.error("Error fetching chat users list:", error);
         res.status(500).json({ message: "Server error fetching users." });
      }
 });
 
-// --- MODIFIED: Route for uploading chat images ---
+// --- UPLOAD IMAGE ---
 router.post('/upload-image', protect, upload.single('chatImage'), async (req, res) => {
-    if (!req.file) {
-        return res.status(400).json({ message: "No image file provided or file type not allowed." });
-    }
+    if (!req.file) return res.status(400).json({ message: "No image file provided." });
     
-    // req.file.path is now the full secure Cloudinary URL (https://...)
-    // req.file.filename is the Cloudinary public_id
     res.status(200).json({
         imageUrl: req.file.path,
         imageCloudinaryId: req.file.filename 

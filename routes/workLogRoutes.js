@@ -191,7 +191,7 @@ router.get('/all', protect, isAdmin, async (req, res) => {
             .populate('employeeId', 'fullName profilePictureUrl')
             .populate({
                 path: 'subcategoryId',
-                select: 'name mainCategory',
+                select: 'name mainCategory groupType',
                 populate: {
                     path: 'mainCategory',
                     select: 'name'
@@ -311,7 +311,7 @@ router.get('/my-logs', protect, async (req, res) => {
             .populate('employeeId', 'fullName')
             .populate({
                 path: 'subcategoryId',
-                select: 'name mainCategory',
+                select: 'name mainCategory groupType',
                 populate: {
                     path: 'mainCategory',
                     select: 'name'
@@ -551,6 +551,119 @@ router.get('/employee/:employeeId', protect, isAdmin, async (req, res) => {
     } catch (error) {
         console.error("Error fetching employee work logs:", error);
         res.status(500).json({ message: 'Server error fetching employee work logs.' });
+    }
+});
+
+router.put('/:id/edit-payment', protect, isAdmin, async (req, res) => {
+    try {
+        const { newAmount } = req.body;
+        
+        // Validation
+        if (newAmount === undefined || newAmount === null || newAmount < 0) {
+            return res.status(400).json({ message: 'Invalid amount provided.' });
+        }
+
+        const workLog = await WorkLog.findById(req.params.id);
+        
+        if (!workLog) {
+            return res.status(404).json({ message: 'Work log not found.' });
+        }
+
+        // Update fields
+        workLog.editedTotalPayment = Number(newAmount);
+        workLog.isAdminEdited = true;
+
+        const updatedLog = await workLog.save();
+        
+        // Populate for immediate UI update
+        await updatedLog.populate('employeeId', 'fullName');
+        await updatedLog.populate('subcategoryId', 'name');
+
+        res.json({ 
+            message: 'Payment amount updated successfully', 
+            workLog: updatedLog 
+        });
+
+    } catch (error) {
+        console.error("Error editing payment:", error);
+        res.status(500).json({ message: 'Server Error editing payment.', error: error.message });
+    }
+});
+
+router.put('/:id/update-quantity', protect, isAdmin, async (req, res) => {
+    try {
+        const { newQuantity } = req.body;
+        
+        if (newQuantity === undefined || newQuantity === null || newQuantity < 0) {
+            return res.status(400).json({ message: 'Invalid quantity provided.' });
+        }
+
+        const workLog = await WorkLog.findById(req.params.id);
+        
+        if (!workLog) {
+            return res.status(404).json({ message: 'Work log not found.' });
+        }
+
+        // Update the correct field based on payment type
+        if (workLog.paymentTypeAtTime === 'perHour') {
+            workLog.hoursWorked = Number(newQuantity);
+        } else {
+            // perPiece, perDozen, viss
+            workLog.quantity = Number(newQuantity);
+        }
+
+        // Mark as edited by admin
+        workLog.isAdminEdited = true;
+
+        const updatedLog = await workLog.save();
+        
+        // Populate for immediate UI update
+        await updatedLog.populate('employeeId', 'fullName');
+        await updatedLog.populate({
+            path: 'subcategoryId',
+            select: 'name mainCategory groupType',
+            populate: { path: 'mainCategory', select: 'name' }
+        });
+
+        res.json({ 
+            message: 'Work log updated successfully', 
+            workLog: updatedLog 
+        });
+
+    } catch (error) {
+        console.error("Error updating work log:", error);
+        res.status(500).json({ message: 'Server Error updating log.', error: error.message });
+    }
+});
+
+// --- UPDATE GROUP INFO (Name & Notice) ---
+router.put('/group/:conversationId', protect, async (req, res) => {
+    try {
+        const { conversationId } = req.params;
+        const { groupName, groupNotice } = req.body;
+
+        // Find and update the conversation
+        const updatedChat = await Conversation.findByIdAndUpdate(
+            conversationId,
+            {
+                $set: {
+                    groupName: groupName,
+                    groupNotice: groupNotice
+                }
+            },
+            { new: true } // Return the updated object
+        )
+        .populate("participants", "fullName profilePictureUrl")
+        .populate("groupAdmin", "fullName");
+
+        if (!updatedChat) {
+            return res.status(404).json({ message: "Chat not found" });
+        }
+
+        res.status(200).json(updatedChat);
+    } catch (error) {
+        console.error("Error updating group info:", error);
+        res.status(500).json({ message: "Server Error updating group info" });
     }
 });
 

@@ -1,3 +1,4 @@
+// backend/models/subcategoryModel.js
 const mongoose = require('mongoose');
 
 const subcategorySchema = mongoose.Schema({
@@ -19,12 +20,16 @@ const subcategorySchema = mongoose.Schema({
         type: Number,
         required: true
     },
-    // --- ADD THIS SECTION ---
     order: {
         type: Number,
-        default: 0 // Default to 0 so existing items don't break
+        default: 0 
+    },
+    // --- ADD THIS NEW FIELD ---
+    groupType: {
+        type: String,
+        default: '' // Default to empty string if not provided
     }
-    // ------------------------
+    // --------------------------
 }, {
     timestamps: true
 });

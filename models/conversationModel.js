@@ -1,11 +1,9 @@
-// models/conversationModel.js
 const mongoose = require('mongoose');
 
 const conversationSchema = new mongoose.Schema({
     participants: [{
         type: mongoose.Schema.Types.ObjectId,
-        ref: 'User',
-        required: true
+        ref: 'User'
     }],
     isGroupChat: {
         type: Boolean,
@@ -13,15 +11,19 @@ const conversationSchema = new mongoose.Schema({
     },
     groupName: {
         type: String,
-        trim: true // Remove whitespace
-        // required: function() { return this.isGroupChat; } // Optional: Required only if it's a group
+        trim: true
     },
-    groupAdmin: { // The user who created the group
+    // --- ADD THIS LINE ---
+    groupNotice: {
+        type: String,
+        default: ""
+    },
+    // ---------------------
+    groupAdmin: {
         type: mongoose.Schema.Types.ObjectId,
         ref: 'User'
-        // required: function() { return this.isGroupChat; } // Optional: Required only if it's a group
     },
-    lastMessage: { // Reference to the latest message for quick display/sorting
+    lastMessage: {
         type: mongoose.Schema.Types.ObjectId,
         ref: 'Message'
     },
@@ -30,9 +32,6 @@ const conversationSchema = new mongoose.Schema({
         of: Number,
         default: {}
     }
-}, {
-    timestamps: true // Adds createdAt and updatedAt
-});
+}, { timestamps: true });
 
-const Conversation = mongoose.model('Conversation', conversationSchema);
-module.exports = Conversation;
+module.exports = mongoose.model('Conversation', conversationSchema);

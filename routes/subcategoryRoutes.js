@@ -18,7 +18,8 @@ router.get('/', protect, async (req, res) => {
 // POST a new subcategory
 router.post('/', protect, isAdmin, async (req, res) => {
     try {
-        const { name, mainCategory, paymentType, rate } = req.body;
+        // Added groupType to destructuring
+        const { name, mainCategory, paymentType, rate, groupType } = req.body;
         
         if (!name || !mainCategory || !paymentType || !rate) {
             return res.status(400).json({ message: 'All fields are required' });
@@ -31,7 +32,8 @@ router.post('/', protect, isAdmin, async (req, res) => {
             });
         }
 
-        const subcategory = new Subcategory({ name, mainCategory, paymentType, rate });
+        // Added groupType to creation
+        const subcategory = new Subcategory({ name, mainCategory, paymentType, rate, groupType });
         const createdSubcategory = await subcategory.save();
         res.status(201).json(createdSubcategory);
     } catch (error) {
@@ -59,11 +61,11 @@ router.delete('/:id', protect, isAdmin, async (req, res) => {
     }
 });
 
-// --- UPDATE (PUT) Route - MODIFIED ---
+// UPDATE (PUT) Route
 router.put('/:id', protect, isAdmin, async (req, res) => {
     try {
-        // 1. Added 'mainCategory' to the destructured body
-        const { name, rate, paymentType, mainCategory } = req.body;
+        // Added groupType to destructuring
+        const { name, rate, paymentType, mainCategory, groupType } = req.body;
         
         const subcategory = await Subcategory.findById(req.params.id);
 
@@ -73,10 +75,11 @@ router.put('/:id', protect, isAdmin, async (req, res) => {
 
         if (name !== undefined) subcategory.name = name;
         if (rate !== undefined) subcategory.rate = rate;
+        if (mainCategory !== undefined) subcategory.mainCategory = mainCategory;
         
-        // 2. Add logic to update the mainCategory
-        if (mainCategory !== undefined) {
-            subcategory.mainCategory = mainCategory;
+        // Update groupType if provided
+        if (groupType !== undefined) {
+            subcategory.groupType = groupType;
         }
 
         if (paymentType !== undefined) {
@@ -90,8 +93,6 @@ router.put('/:id', protect, isAdmin, async (req, res) => {
         }
         
         const updatedSubcategory = await subcategory.save();
-        
-        // Populate the name so the frontend updates immediately without refresh issues
         await updatedSubcategory.populate('mainCategory', 'name');
         
         res.json(updatedSubcategory);
