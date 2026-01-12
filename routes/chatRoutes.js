@@ -7,7 +7,7 @@ const User = require('../models/userModel');
 const { protect, isAdmin } = require('../middleware/authMiddleware'); 
 const upload = require('../middleware/chatImageUpload');
 
-// --- GET ALL CONVERSATIONS ---
+// --- GET ALL CONVERSATIONS (FIXED: Calculates Real Unread Count) ---
 router.get('/', protect, async (req, res) => {
     try {
         const conversations = await Conversation.find({ 
@@ -25,38 +25,92 @@ router.get('/', protect, async (req, res) => {
         })
         .sort({ updatedAt: -1 });
 
-        // --- FIX: Reset unread counts for this user on initial fetch after login ---
-        // This ensures when a user logs in, they don't see old unread counts
-        const userId = req.user._id.toString();
-        
-        const updatedConversations = await Promise.all(conversations.map(async (convo) => {
-            // Check if this user has unread counts
-            const userUnreadCount = convo.unreadCounts?.get(userId) || 0;
+        // --- REAL-TIME FIX: Calculate accurate unread count from Messages ---
+        // We use Promise.all to run these counts in parallel for performance
+        const conversationsWithUnread = await Promise.all(conversations.map(async (convo) => {
+            const convoObj = convo.toObject ? convo.toObject() : convo;
             
-            // If there are unread counts from previous session, reset them
-            if (userUnreadCount > 0) {
-                try {
-                    const updateField = `unreadCounts.${userId}`;
-                    await Conversation.findByIdAndUpdate(
-                        convo._id,
-                        { $set: { [updateField]: 0 } },
-                        { new: false } // Don't wait for return, just update
-                    );
-                    
-                    // Update the local copy
-                    convo.unreadCounts.set(userId, 0);
-                } catch (updateError) {
-                    console.error("Error resetting unread count:", updateError);
-                }
+            try {
+                // Count messages where:
+                // 1. Belong to this conversation
+                // 2. Sender is NOT the current user
+                // 3. Current user is NOT in the 'readBy' array
+                const realUnreadCount = await Message.countDocuments({
+                    conversation: convo._id,
+                    sender: { $ne: req.user._id },
+                    readBy: { $ne: req.user._id }
+                });
+
+                convoObj.unreadCount = realUnreadCount;
+            } catch (err) {
+                console.error(`Error counting unread for convo ${convo._id}:`, err);
+                convoObj.unreadCount = 0;
             }
             
-            return convo;
+            return convoObj;
         }));
 
-        res.json(updatedConversations);
+        res.json(conversationsWithUnread);
     } catch (error) {
         console.error("Error fetching conversations:", error);
         res.status(500).json({ message: "Server Error" });
+    }
+});
+
+// --- MARK Conversation as Read (FIXED: Updates Messages too) ---
+router.post('/read/:conversationId', protect, async (req, res) => {
+    const { conversationId } = req.params;
+    const userId = req.user.id;
+
+    try {
+        // 1. Update the 'unreadCounts' cache (Legacy support)
+        const updateField = `unreadCounts.${userId}`;
+        
+        const updatedConversation = await Conversation.findByIdAndUpdate(
+            conversationId,
+            { $set: { [updateField]: 0 } },
+            { new: true }
+        )
+        .populate('participants', 'fullName profilePictureUrl')
+        .populate('groupAdmin', 'fullName')
+        .populate({
+            path: 'lastMessage',
+            select: 'content imageUrl sender createdAt',
+            populate: { path: 'sender', select: 'fullName' }
+        });
+
+        if (!updatedConversation) {
+            return res.status(404).json({ message: "Conversation not found." });
+        }
+
+        // 2. CRITICAL FIX: Mark all actual messages as read in the Message collection
+        // This ensures the count logic in GET / remains accurate
+        await Message.updateMany(
+            { 
+                conversation: conversationId, 
+                sender: { $ne: userId },   // Messages not sent by me
+                readBy: { $ne: userId }    // Messages I haven't read yet
+            },
+            { 
+                $addToSet: { readBy: userId } 
+            }
+        );
+
+        // 3. Return response
+        const convoObj = updatedConversation.toObject ? updatedConversation.toObject() : updatedConversation;
+        convoObj.unreadCount = 0; 
+        
+        // 4. Emit socket event
+        const io = req.app.get('socketio'); 
+        if (io) {
+            io.to(conversationId).emit('conversationUpdated', convoObj);
+        }
+        
+        res.status(200).json(convoObj);
+
+    } catch (error) {
+        console.error("Error marking chat as read:", error);
+        res.status(500).json({ message: "Server error." });
     }
 });
 
@@ -72,10 +126,20 @@ router.post('/', protect, async (req, res) => {
         let conversation = await Conversation.findOne({
             isGroupChat: false,
             participants: { $all: [senderId, recipientId], $size: 2 } 
-        }).populate('participants', 'fullName profilePictureUrl'); 
+        }).populate('participants', 'fullName profilePictureUrl');
 
         if (conversation) {
-            res.status(200).json(conversation);
+            const convoObj = conversation.toObject ? conversation.toObject() : conversation;
+            
+            // Get accurate count
+            const realUnreadCount = await Message.countDocuments({
+                conversation: conversation._id,
+                sender: { $ne: req.user._id },
+                readBy: { $ne: req.user._id }
+            });
+            
+            convoObj.unreadCount = realUnreadCount;
+            res.status(200).json(convoObj);
         } else {
             const newConversation = new Conversation({
                 participants: [senderId, recipientId],
@@ -83,7 +147,10 @@ router.post('/', protect, async (req, res) => {
             });
             const savedConversation = await newConversation.save();
             await savedConversation.populate('participants', 'fullName profilePictureUrl');
-            res.status(201).json(savedConversation);
+            
+            const convoObj = savedConversation.toObject ? savedConversation.toObject() : savedConversation;
+            convoObj.unreadCount = 0;
+            res.status(201).json(convoObj);
         }
     } catch (error) {
         console.error("Error starting/getting DM conversation:", error);
@@ -100,7 +167,7 @@ router.post('/group', protect, async (req, res) => {
         return res.status(400).json({ message: "Group name and at least one participant are required." });
     }
 
-    const allParticipants = [...new Set([adminId, ...participantIds])]; 
+    const allParticipants = [...new Set([adminId, ...participantIds])];
 
     try {
         const newGroupConversation = new Conversation({
@@ -112,8 +179,11 @@ router.post('/group', protect, async (req, res) => {
         const savedGroup = await newGroupConversation.save();
         await savedGroup.populate('participants', 'fullName profilePictureUrl');
         await savedGroup.populate('groupAdmin', 'fullName');
-
-        res.status(201).json(savedGroup);
+        
+        const convoObj = savedGroup.toObject ? savedGroup.toObject() : savedGroup;
+        convoObj.unreadCount = 0;
+        
+        res.status(201).json(convoObj);
     } catch (error) {
         console.error("Error creating group chat:", error);
         res.status(500).json({ message: "Server error creating group chat." });
@@ -141,7 +211,17 @@ router.put('/group/:conversationId', protect, async (req, res) => {
 
         if (!updatedChat) return res.status(404).json({ message: "Chat not found" });
 
-        res.status(200).json(updatedChat);
+        const convoObj = updatedChat.toObject ? updatedChat.toObject() : updatedChat;
+        
+        // Get accurate count for return
+        const realUnreadCount = await Message.countDocuments({
+            conversation: conversationId,
+            sender: { $ne: req.user._id },
+            readBy: { $ne: req.user._id }
+        });
+        convoObj.unreadCount = realUnreadCount;
+        
+        res.status(200).json(convoObj);
     } catch (error) {
         console.error("Error updating group info:", error);
         res.status(500).json({ message: "Server Error updating group info" });
@@ -167,7 +247,17 @@ router.put('/groupadd', protect, async (req, res) => {
 
         if (!updatedConversation) return res.status(404).json({ message: "Conversation not found." });
 
-        res.json(updatedConversation);
+        const convoObj = updatedConversation.toObject ? updatedConversation.toObject() : updatedConversation;
+        
+        // Get accurate count
+        const realUnreadCount = await Message.countDocuments({
+            conversation: conversationId,
+            sender: { $ne: req.user._id },
+            readBy: { $ne: req.user._id }
+        });
+        convoObj.unreadCount = realUnreadCount;
+        
+        res.json(convoObj);
     } catch (error) {
         console.error("Error adding members:", error);
         res.status(500).json({ message: "Server error adding members." });
@@ -184,51 +274,6 @@ router.get('/messages/:conversationId', protect, async (req, res) => {
         res.json(messages);
     } catch (error) {
         res.status(500).json({ message: "Server error fetching messages." });
-    }
-});
-
-// --- MARK Conversation as Read (FIXED: FORCE UPDATE) ---
-router.post('/read/:conversationId', protect, async (req, res) => {
-    const { conversationId } = req.params;
-    const userId = req.user.id;
-
-    try {
-        // 1. Construct the update key
-        const updateField = `unreadCounts.${userId}`;
-
-        // 2. FORCE UPDATE the database to 0. 
-        const updatedConversation = await Conversation.findByIdAndUpdate(
-            conversationId,
-            { $set: { [updateField]: 0 } },
-            { new: true }
-        );
-
-        if (!updatedConversation) {
-            return res.status(404).json({ message: "Conversation not found." });
-        }
-
-        // 3. Populate details for the frontend
-        await updatedConversation.populate([
-            { path: 'participants', select: 'fullName profilePictureUrl' },
-            { path: 'groupAdmin', select: 'fullName' },
-            { 
-                path: 'lastMessage',
-                select: 'content imageUrl sender createdAt',
-                populate: { path: 'sender', select: 'fullName' }
-            }
-        ]);
-
-        // 4. Emit socket event so other devices/tabs update instantly
-        const io = req.app.get('socketio'); 
-        if (io) {
-            io.to(conversationId).emit('conversationUpdated', updatedConversation);
-        }
-        
-        res.status(200).json(updatedConversation); 
-
-    } catch (error) {
-        console.error("Error marking chat as read:", error);
-        res.status(500).json({ message: "Server error." });
     }
 });
 
@@ -259,6 +304,52 @@ router.post('/upload-image', protect, upload.single('chatImage'), async (req, re
         imageUrl: req.file.path,
         imageCloudinaryId: req.file.filename 
     });
+});
+
+// --- REMOVE MEMBER FROM GROUP ---
+router.put('/groupremove', protect, async (req, res) => {
+    const { conversationId, participantId } = req.body;
+
+    if (!conversationId || !participantId) {
+        return res.status(400).json({ message: "Invalid data." });
+    }
+
+    try {
+        // Prevent removing the admin (optional safety check)
+        const conversation = await Conversation.findById(conversationId);
+        if (conversation.groupAdmin.toString() === participantId) {
+            return res.status(400).json({ message: "Cannot remove the group admin." });
+        }
+
+        const updatedConversation = await Conversation.findByIdAndUpdate(
+            conversationId,
+            { 
+                $pull: { participants: participantId } 
+            },
+            { new: true }
+        )
+        .populate('participants', 'fullName profilePictureUrl')
+        .populate('groupAdmin', 'fullName');
+
+        if (!updatedConversation) {
+            return res.status(404).json({ message: "Conversation not found." });
+        }
+
+        const convoObj = updatedConversation.toObject ? updatedConversation.toObject() : updatedConversation;
+        
+        // Get accurate count
+        const realUnreadCount = await Message.countDocuments({
+            conversation: conversationId,
+            sender: { $ne: req.user._id },
+            readBy: { $ne: req.user._id }
+        });
+        convoObj.unreadCount = realUnreadCount;
+        
+        res.json(convoObj);
+    } catch (error) {
+        console.error("Error removing member:", error);
+        res.status(500).json({ message: "Server error removing member." });
+    }
 });
 
 module.exports = router;
