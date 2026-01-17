@@ -1,4 +1,4 @@
-// routes/payrollRoutes.js
+// backend/routes/payrollRoutes.js
 const express = require('express');
 const router = express.Router();
 const WorkLog = require('../models/workLogModel');
@@ -8,6 +8,11 @@ const { protect, isAdmin } = require('../middleware/authMiddleware');
 const calculateLogSalary = (log) => {
     let salary = 0;
     const rate = log.rateAtTime || 0;
+    
+    if (log.isAdminEdited && log.editedTotalPayment != null) {
+        return log.editedTotalPayment;
+    }
+
     switch (log.paymentTypeAtTime) {
         case 'perPiece':
         case 'perDozen':
@@ -25,50 +30,51 @@ const calculateLogSalary = (log) => {
     return salary;
 };
 
-// --- Helper function to get period dates (FIXED with UTC) ---
-const getPeriodDates = () => {
-    const now = new Date();
-    const year = now.getUTCFullYear();
-    const month = now.getUTCMonth();
-    const currentDay = now.getUTCDate();
-    
-    let startDate, endDate;
-    
-    if (currentDay <= 15) {
-        // First half: 1st to 15th (UTC)
-        startDate = new Date(Date.UTC(year, month, 1, 0, 0, 0, 0));
-        endDate = new Date(Date.UTC(year, month, 15, 23, 59, 59, 999));
-    } else {
-        // Second half: 16th to last day of month (UTC)
-        startDate = new Date(Date.UTC(year, month, 16, 0, 0, 0, 0));
-        endDate = new Date(Date.UTC(year, month + 1, 0, 23, 59, 59, 999));
-    }
-    
-    return { startDate, endDate };
-};
-
-// --- NEW ROUTE: Get TOTAL salary summary for Admin Dashboard ---
+// --- GET TOTAL SALARY SUMMARY (Admin Dashboard) ---
 router.get('/current-period-summary', protect, isAdmin, async (req, res) => {
     try {
-        const { startDate, endDate } = getPeriodDates();
+        const { type } = req.query; 
+        const now = new Date();
+        const year = now.getUTCFullYear();
+        const month = now.getUTCMonth();
+        const currentDay = now.getUTCDate();
+        
+        let startDate, queryEndDate;
 
-        console.log('📅 Period dates (UTC):', {
-            startUTC: startDate.toISOString(),
-            endUTC: endDate.toISOString(),
-            startLocal: startDate.toLocaleDateString(),
-            endLocal: endDate.toLocaleDateString()
-        });
+        // --- 1. Determine Dates (UTC) ---
+        if (type === 'semi-monthly') {
+            if (currentDay <= 15) {
+                // 1st - 15th
+                startDate = new Date(Date.UTC(year, month, 1, 0, 0, 0, 0));
+                queryEndDate = new Date(Date.UTC(year, month, 15, 23, 59, 59, 999));
+            } else {
+                // 16th - End
+                startDate = new Date(Date.UTC(year, month, 16, 0, 0, 0, 0));
+                queryEndDate = new Date(Date.UTC(year, month + 1, 0, 23, 59, 59, 999));
+            }
+        } else {
+            // Monthly (1st - End)
+            startDate = new Date(Date.UTC(year, month, 1, 0, 0, 0, 0));
+            queryEndDate = new Date(Date.UTC(year, month + 1, 0, 23, 59, 59, 999));
+        }
 
+        // --- 2. Create a "Display" End Date ---
+        // We clone the queryEndDate but set time to 00:00 UTC.
+        // This prevents Myanmar Time (+06:30) from rolling it over to the next day.
+        const displayEndDate = new Date(queryEndDate);
+        displayEndDate.setUTCHours(0, 0, 0, 0);
+
+        // --- 3. Query Database (Use queryEndDate to catch all logs until 23:59) ---
         const workLogs = await WorkLog.find({
-            workDate: { $gte: startDate, $lte: endDate }
+            workDate: { $gte: startDate, $lte: queryEndDate },
+            paymentTypeAtTime: { $ne: 'delivery' } 
         }).populate('employeeId', 'fullName');
 
         const payrollMap = new Map();
 
         workLogs.forEach(log => {
-            const employeeId = log.employeeId?._id.toString();
-            if (!employeeId) return;
-
+            if (!log.employeeId) return;
+            const employeeId = log.employeeId._id.toString();
             const employeeName = log.employeeId.fullName;
             const logSalary = calculateLogSalary(log);
 
@@ -89,9 +95,9 @@ router.get('/current-period-summary', protect, isAdmin, async (req, res) => {
         const payroll = Array.from(payrollMap.values());
 
         res.json({
-            startDate: startDate.toISOString(), // Send as ISO string
-            endDate: endDate.toISOString(), // Send as ISO string
-            payroll
+            startDate: startDate.toISOString(),
+            endDate: displayEndDate.toISOString(), // Send the Safe Display Date
+            payroll 
         });
 
     } catch (error) {
@@ -100,37 +106,38 @@ router.get('/current-period-summary', protect, isAdmin, async (req, res) => {
     }
 });
 
-// --- GET SALARY SUMMARY FOR A SPECIFIC EMPLOYEE ---
+// --- GET SALARY SUMMARY FOR A SPECIFIC EMPLOYEE (Detail View) ---
 router.get('/employee-summary/:employeeId', protect, isAdmin, async (req, res) => {
     const { employeeId } = req.params;
-    const { period } = req.query; // 'firstHalf' or 'secondHalf'
+    const { period } = req.query; 
 
     try {
         const now = new Date();
-        const year = now.getFullYear();
-        const month = now.getMonth();
+        const year = now.getUTCFullYear();
+        const month = now.getUTCMonth();
         
-        let startDate, endDate;
+        let startDate, queryEndDate;
 
-        if (period === 'secondHalf') {
-            startDate = new Date(year, month, 16);
-            endDate = new Date(year, month + 1, 0, 23, 59, 59, 999);
+        if (period === 'monthly') {
+            startDate = new Date(Date.UTC(year, month, 1, 0, 0, 0, 0));
+            queryEndDate = new Date(Date.UTC(year, month + 1, 0, 23, 59, 59, 999));
+        } else if (period === 'secondHalf') {
+            startDate = new Date(Date.UTC(year, month, 16, 0, 0, 0, 0));
+            queryEndDate = new Date(Date.UTC(year, month + 1, 0, 23, 59, 59, 999));
         } else {
-            startDate = new Date(year, month, 1);
-            endDate = new Date(year, month, 15, 23, 59, 59, 999);
+            // Default firstHalf
+            startDate = new Date(Date.UTC(year, month, 1, 0, 0, 0, 0));
+            queryEndDate = new Date(Date.UTC(year, month, 15, 23, 59, 59, 999));
         }
 
-        console.log('📅 Employee period dates:', {
-            period,
-            start: startDate.toISOString(),
-            end: endDate.toISOString(),
-            startLocal: startDate.toLocaleDateString(),
-            endLocal: endDate.toLocaleDateString()
-        });
+        // Safe Display Date
+        const displayEndDate = new Date(queryEndDate);
+        displayEndDate.setUTCHours(0, 0, 0, 0);
 
         const workLogs = await WorkLog.find({
             employeeId: employeeId,
-            workDate: { $gte: startDate, $lte: endDate }
+            workDate: { $gte: startDate, $lte: queryEndDate },
+            paymentTypeAtTime: { $ne: 'delivery' }
         });
 
         let totalSalary = 0;
@@ -140,8 +147,8 @@ router.get('/employee-summary/:employeeId', protect, isAdmin, async (req, res) =
 
         res.json({
             totalSalary,
-            startDate,
-            endDate,
+            startDate: startDate.toISOString(),
+            endDate: displayEndDate.toISOString(), // Send Safe Date
             period,
             workLogCount: workLogs.length
         });
