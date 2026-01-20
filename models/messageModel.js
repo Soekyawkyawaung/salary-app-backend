@@ -1,4 +1,4 @@
-// models/messageModel.js
+// backend/models/messageModel.js
 const mongoose = require('mongoose');
 
 const messageSchema = new mongoose.Schema({
@@ -17,16 +17,24 @@ const messageSchema = new mongoose.Schema({
         ref: 'Conversation',
         required: true
     },
-    // --- MODIFIED ---
     imageUrl: {
-        type: String, // Will store the full https://res.cloudinary.com/... URL
+        type: String, 
         required: function() { return !this.content; } 
     },
-    // --- ADD THIS FIELD ---
     imageCloudinaryId: {
-        type: String // Will store the public_id from Cloudinary
+        type: String 
     },
-    // --- END ADD ---
+    // --- NEW: THIS WAS MISSING ---
+    replyTo: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Message',
+        default: null
+    },
+    // --- NEW: Track Recall Status ---
+    isRecalled: {
+        type: Boolean,
+        default: false
+    },
     readBy: [{
         type: mongoose.Schema.Types.ObjectId,
         ref: 'User'

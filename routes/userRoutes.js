@@ -110,7 +110,6 @@ router.put('/profile', protect, async (req, res) => {
         const user = await User.findById(req.user.id);
         if (user) {
             user.fullName = req.body.fullName || user.fullName;
-            // Only allow setting birthday if it doesn't exist yet
             if (!user.birthday && req.body.birthday) {
                 user.birthday = req.body.birthday;
             }
@@ -118,7 +117,7 @@ router.put('/profile', protect, async (req, res) => {
             res.json({
                 _id: updatedUser._id, fullName: updatedUser.fullName, email: updatedUser.email, role: updatedUser.role,
                 profilePictureUrl: updatedUser.profilePictureUrl, birthday: updatedUser.birthday, status: updatedUser.status,
-                token: generateToken(updatedUser._id), // Re-issue token potentially? Only if needed.
+                token: generateToken(updatedUser._id),
             });
         } else {
             res.status(404).json({ message: 'User not found' });
@@ -138,7 +137,7 @@ router.put('/change-password', protect, async (req, res) => {
             if (!newPassword || newPassword.length < 6) {
                  return res.status(400).json({ message: 'New password must be at least 6 characters long.' });
             }
-            user.password = newPassword; // Mongoose pre-save hook will hash it
+            user.password = newPassword;
             await user.save();
             res.json({ message: 'Password updated successfully' });
         } else {
@@ -151,7 +150,6 @@ router.put('/change-password', protect, async (req, res) => {
 });
 
 router.put('/:id/approve', protect, isAdmin, async (req, res) => {
-    // Basic ID format check before querying DB
     if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
         return res.status(400).json({ message: 'Invalid employee ID format.' });
     }
@@ -170,7 +168,6 @@ router.put('/:id/approve', protect, isAdmin, async (req, res) => {
 });
 
 router.put('/:id/decline', protect, isAdmin, async (req, res) => {
-    // Basic ID format check before querying DB
     if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
         return res.status(400).json({ message: 'Invalid employee ID format.' });
     }
@@ -190,10 +187,12 @@ router.put('/:id/decline', protect, isAdmin, async (req, res) => {
 
 
 // --- Specific GET Routes (MUST come before /:id) ---
+
+// 1. Get Pending Users
 router.get('/pending', protect, isAdmin, async (req, res) => {
     try {
         const pendingUsers = await User.find({ status: 'pending', role: { $ne: 'admin' } })
-                                        .select('-password').sort({ createdAt: -1 }); // Sort newest first
+                                        .select('-password').sort({ createdAt: -1 });
         res.json(pendingUsers);
     } catch (error) {
         console.error("Error fetching pending users:", error);
@@ -201,19 +200,18 @@ router.get('/pending', protect, isAdmin, async (req, res) => {
     }
 });
 
+// 2. Get Chat List
 router.get('/chat-list', protect, async (req, res) => {
      try {
          let query = {};
          if (req.user.role === 'admin') {
-             // Admin sees all approved employees (excluding self)
              query = { role: 'employee', status: 'approved', _id: { $ne: req.user.id } };
          } else {
-             // Employee sees only admins (excluding self)
              query = { role: 'admin', _id: { $ne: req.user.id } };
          }
          const users = await User.find(query)
-             .select('fullName profilePictureUrl email') // Select necessary fields
-             .sort({ fullName: 1 }); // Sort alphabetically
+             .select('fullName profilePictureUrl email')
+             .sort({ fullName: 1 });
          res.json(users);
      } catch (error) {
         console.error("Error fetching chat users list:", error);
@@ -221,15 +219,27 @@ router.get('/chat-list', protect, async (req, res) => {
      }
 });
 
-// --- Base GET Route (for admin employee list - approved only) ---
-// This handles requests to GET /api/users/
-router.get('/', protect, isAdmin, async (req, res) => {
+// 3. Get All Users (Fixes the 400 Bad Request Error for /users/all)
+// This must be placed BEFORE the /:id route
+router.get('/all', protect, isAdmin, async (req, res) => {
     try {
-        console.log("Fetching approved employees for list...");
+        console.log("Fetching all approved employees for dropdowns...");
         const users = await User.find({ role: 'employee', status: 'approved' })
                            .select('-password')
                            .sort({ fullName: 1 });
-        console.log(`Found ${users.length} approved employees.`);
+        res.json(users);
+    } catch (error) {
+        console.error("Error fetching all employees:", error);
+        res.status(500).json({ message: "Server error fetching employees." });
+    }
+});
+
+// 4. Base GET Route (Optional, does same as /all but good for REST standards)
+router.get('/', protect, isAdmin, async (req, res) => {
+    try {
+        const users = await User.find({ role: 'employee', status: 'approved' })
+                           .select('-password')
+                           .sort({ fullName: 1 });
         res.json(users);
     } catch (error) {
         console.error("Error fetching approved employees:", error);
@@ -237,13 +247,11 @@ router.get('/', protect, isAdmin, async (req, res) => {
     }
 });
 
-// --- Parameterized GET Route (MUST come AFTER specific GETs and base GET /) ---
+// --- Parameterized GET Route (MUST come LAST) ---
+// This handles /:id. If 'all' falls through to here, it causes the CastError.
 router.get('/:id', protect, isAdmin, async (req, res) => {
     const userId = req.params.id;
-    console.log(`Fetching user details for ID: ${userId}`);
     if (!mongoose.Types.ObjectId.isValid(userId)) {
-        // This check prevents the CastError early for invalid formats
-        // The specific '/all' request won't reach here due to route order
         return res.status(400).json({ message: `Invalid employee ID format.` });
     }
     try {
@@ -254,7 +262,6 @@ router.get('/:id', protect, isAdmin, async (req, res) => {
         res.json(user);
     } catch (error) {
         console.error(`Error fetching employee ${userId}:`, error);
-        // Catch CastError specifically if isValid check wasn't enough (unlikely but safe)
         if (error.name === 'CastError') {
              return res.status(400).json({ message: `Invalid employee ID format: ${userId}` });
         }
@@ -277,8 +284,6 @@ router.delete('/:id', protect, isAdmin, async (req, res) => {
         if (user.role === 'admin') {
             return res.status(403).json({ message: 'Cannot delete an admin account.' });
         }
-        // TODO: Decide if associated WorkLogs or Conversations should be deleted
-        // Example: await WorkLog.deleteMany({ employeeId: userId });
         await User.deleteOne({ _id: userId });
         res.json({ message: 'Employee account deleted successfully.' });
     } catch (error) {
