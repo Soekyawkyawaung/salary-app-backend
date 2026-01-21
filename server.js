@@ -12,6 +12,7 @@ const jwt = require('jsonwebtoken');
 const User = require('./models/userModel');
 const Conversation = require('./models/conversationModel');
 const Message = require('./models/messageModel');
+const remarkRoutes = require('./routes/remarkRoutes');
 
 const app = express();
 const server = http.createServer(app);
@@ -71,6 +72,7 @@ app.use('/api/worklogs', workLogRoutes);
 app.use('/api/payroll', payrollRoutes);
 app.use('/api/chat', chatRoutes);
 app.use('/api/fines', fineRoutes);
+app.use('/api', remarkRoutes);
 
 
 // --- Socket.IO Connection Logic ---
